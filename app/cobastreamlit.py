@@ -11,7 +11,7 @@ import streamlit as st
 from pathlib import Path
 from PIL import Image
 
-from pipeline import (
+from app.pipeline import (
     Config,
     run_baseline,
     run_rf,
