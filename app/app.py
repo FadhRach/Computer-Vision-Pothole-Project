@@ -1,170 +1,204 @@
 """
 Pothole Detection — Streamlit Web App
-Pipeline: 10-channel features + simplified road segmentation + Random Forest + SLIC
+Self-contained: semua fungsi pipeline ada di file ini.
 
-Cara menjalankan (dari root project):
+Jalankan dari root project:
     streamlit run app/app.py
 
 Syarat:
-    - model/model_rf.joblib   (hasil training Cell 9 di notebook)
-    - model/scaler_rf.joblib  (disimpan bersamaan dengan model)
+    model/model_rf_9ch.joblib  (hasil training di notebook Bagian 5)
 """
 
+import time
 from pathlib import Path
 
 import cv2
 import joblib
 import numpy as np
 import streamlit as st
-from PIL import Image
 from skimage.segmentation import slic
-from sklearn.preprocessing import StandardScaler
+from skimage.feature import local_binary_pattern
+
 
 # ===========================================================================
-# PATH DAN KONSTANTA
+# KONFIGURASI
 # ===========================================================================
 
-ROOT        = Path(__file__).resolve().parent.parent
-MODEL_PATH  = ROOT / "model" / "model_rf.joblib"
-SCALER_PATH = ROOT / "model" / "scaler_rf.joblib"
+ROOT       = Path(__file__).resolve().parent.parent
+MODEL_PATH = ROOT / 'model' / 'model_rf_9ch.joblib'
 
-# Parameter pipeline — harus sama persis dengan notebook
-WORK_SCALE        = 0.5
-ILLUM_BLUR_SIGMA  = 101
-CLAHE_CLIP        = 2.5
-CLAHE_GRID        = 8
-SLIC_N_SEGMENTS   = 250
-SLIC_COMPACTNESS  = 10.0
-POSTPROC_MIN_AREA = 500
-TOP_CROP_PCT      = 0.10
-MASK_THRESHOLD    = 127
+WORK_SCALE   = 0.5
+ILLUM_SIGMA  = 101
+CLAHE_CLIP   = 2.5
+CLAHE_GRID   = 8
+TOP_CROP_PCT = 0.10
+MASK_THRESH  = 127
+SLIC_N_SEG   = 250
+SLIC_COMPACT = 10.0
+MIN_AREA     = 500
+POSTPROC_K   = 5
+
+# Segmentasi jalan
+SKY_HUE_LOW  = 85
+SKY_HUE_HIGH = 140
+SKY_SAT_MAX  = 130
+SKY_VAL_MIN  = 80
+VEG_HUE_LOW  = 20
+VEG_HUE_HIGH = 85
+VEG_SAT_MIN  = 40
+ROAD_MORPH_K = 7
 
 FEATURE_NAMES = [
-    "Intensity", "Local Std Dev", "Local Range", "Gradient",
-    "HSV Hue", "HSV Saturation", "HSV Value",
-    "Harris Corners", "LoG Blob", "HOG Entropy",
+    'BGR Blue', 'BGR Green', 'BGR Red',
+    'HSV Hue', 'HSV Sat', 'HSV Val',
+    'Gradient Mag', 'Blackhat', 'LBP',
 ]
-N_FEATURES = len(FEATURE_NAMES)  # 10
+N_FEATURES = 9
 
 
 # ===========================================================================
-# PIPELINE — PREPROCESSING
+# PREPROCESSING
 # ===========================================================================
 
 def normalize_illumination(gray):
-    ksize        = ILLUM_BLUR_SIGMA if ILLUM_BLUR_SIGMA % 2 == 1 else ILLUM_BLUR_SIGMA + 1
-    illumination = cv2.GaussianBlur(gray.astype(np.float32), (ksize, ksize), 0)
-    normalized   = gray.astype(np.float32) / (illumination + 1e-6) * 128.0
-    return np.clip(normalized, 0, 255).astype(np.uint8)
+    ksize = ILLUM_SIGMA if ILLUM_SIGMA % 2 == 1 else ILLUM_SIGMA + 1
+    illum = cv2.GaussianBlur(gray.astype(np.float32), (ksize, ksize), 0)
+    norm  = gray.astype(np.float32) / (illum + 1e-6) * 128.0
+    return np.clip(norm, 0, 255).astype(np.uint8)
 
 
 def preprocess(bgr):
-    L       = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)[:, :, 0]
-    L_norm  = normalize_illumination(L)
-    clahe   = cv2.createCLAHE(clipLimit=CLAHE_CLIP, tileGridSize=(CLAHE_GRID, CLAHE_GRID))
-    L_clahe = clahe.apply(L_norm)
-    return cv2.bilateralFilter(L_clahe, d=9, sigmaColor=50, sigmaSpace=50)
+    L      = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)[:, :, 0]
+    L_norm = normalize_illumination(L)
+    clahe  = cv2.createCLAHE(clipLimit=CLAHE_CLIP, tileGridSize=(CLAHE_GRID, CLAHE_GRID))
+    L_eq   = clahe.apply(L_norm)
+    return cv2.bilateralFilter(L_eq, d=9, sigmaColor=50, sigmaSpace=50)
 
 
 # ===========================================================================
-# PIPELINE — SEGMENTASI JALAN (SEDERHANA)
+# SEGMENTASI JALAN
 # ===========================================================================
 
 def segment_road(bgr):
+    """Isolasi jalan dengan menghapus langit dan vegetasi.
+
+    Tahap 1: Mask langit (hue biru, separuh atas gambar)
+    Tahap 2: Mask vegetasi/rumput (hue hijau, green > red)
+    Tahap 3: Pilih komponen terbesar paling bawah = jalan
+    Fallback: estimasi horizon Canny jika gagal
     """
-    Masking langit sederhana di bagian atas gambar.
-    Sisanya dianggap area jalan.
-    """
-    h, w      = bgr.shape[:2]
-    hsv       = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
-    H, S, V   = cv2.split(hsv)
-    road_mask = np.ones((h, w), dtype=np.uint8) * 255
-    top_h     = h // 2
-    sky       = ((H[:top_h] >= 85) & (H[:top_h] <= 140) &
-                  (S[:top_h] <= 130) & (V[:top_h] >= 80))
-    road_mask[:top_h][sky]        = 0
-    road_mask[:int(h * TOP_CROP_PCT)] = 0
-    return road_mask
+    h, w = bgr.shape[:2]
+    hsv  = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    H, S, V = cv2.split(hsv)
+
+    sky_mask         = np.zeros((h, w), dtype=np.uint8)
+    top_h            = h // 2
+    sky_region       = (
+        (H[:top_h] >= SKY_HUE_LOW) & (H[:top_h] <= SKY_HUE_HIGH) &
+        (S[:top_h] <= SKY_SAT_MAX) & (V[:top_h] >= SKY_VAL_MIN)
+    ).astype(np.uint8) * 255
+    sky_mask[:top_h] = sky_region
+
+    g, r     = bgr[:, :, 1].astype(np.int16), bgr[:, :, 2].astype(np.int16)
+    veg_mask = (
+        (H >= VEG_HUE_LOW) & (H <= VEG_HUE_HIGH) &
+        (S >= VEG_SAT_MIN) & (g > r)
+    ).astype(np.uint8) * 255
+
+    road_cand = cv2.bitwise_not(cv2.bitwise_or(sky_mask, veg_mask))
+    k         = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ROAD_MORPH_K, ROAD_MORPH_K))
+    road_cand = cv2.morphologyEx(road_cand, cv2.MORPH_CLOSE, k, iterations=2)
+    road_cand = cv2.morphologyEx(road_cand, cv2.MORPH_OPEN,  k, iterations=1)
+
+    n_lbl, labels, stats, centroids = cv2.connectedComponentsWithStats(road_cand, connectivity=8)
+    best_lbl, best_score = -1, -1.0
+    for lbl in range(1, n_lbl):
+        score = stats[lbl, cv2.CC_STAT_AREA] * (centroids[lbl][1] / h)
+        if score > best_score:
+            best_score, best_lbl = score, lbl
+
+    if best_lbl == -1:
+        gray_upper = cv2.cvtColor(bgr[:h // 2], cv2.COLOR_BGR2GRAY)
+        row_sums   = np.sum(cv2.Canny(gray_upper, 50, 150), axis=1)
+        horizon    = max(int(np.argmax(row_sums)), h // 10) if row_sums.max() > 0 else h // 3
+        mask       = np.zeros((h, w), dtype=np.uint8)
+        mask[horizon:] = 255
+        return mask
+
+    comp        = (labels == best_lbl).astype(np.uint8) * 255
+    contours, _ = cv2.findContours(comp, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    filled      = comp.copy()
+    cv2.drawContours(filled, contours, -1, 255, thickness=cv2.FILLED)
+    return filled
 
 
 # ===========================================================================
-# PIPELINE — EKSTRAKSI 10 FITUR
+# EKSTRAKSI FITUR (9-channel, sinkron dengan model yang disimpan)
 # ===========================================================================
 
 def extract_features(bgr, prep):
-    gray = prep.astype(np.float32)
+    """9-channel feature map (H, W, 9), semua nilai dalam [0, 1].
 
-    intensity   = gray / 255.0
+    Ch 0: BGR Blue    Ch 3: HSV Hue   Ch 6: Gradient Mag
+    Ch 1: BGR Green   Ch 4: HSV Sat   Ch 7: Blackhat
+    Ch 2: BGR Red     Ch 5: HSV Val   Ch 8: LBP
 
-    g_sq        = cv2.blur(gray ** 2, (7, 7))
-    g_mean      = cv2.blur(gray, (7, 7))
-    local_std   = np.clip(np.sqrt(np.maximum(g_sq - g_mean ** 2, 0)) / 128.0, 0, 1)
+    Blackhat dan LBP dihitung dari grayscale BGR ORIGINAL (bukan prep).
+    """
+    gray_u8 = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
 
-    k9          = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
-    local_range = (cv2.dilate(prep, k9).astype(np.float32) -
-                   cv2.erode(prep, k9).astype(np.float32)) / 255.0
+    b = bgr[:, :, 0].astype(np.float32) / 255.0
+    g = bgr[:, :, 1].astype(np.float32) / 255.0
+    r = bgr[:, :, 2].astype(np.float32) / 255.0
 
-    sx          = cv2.Sobel(prep, cv2.CV_32F, 1, 0, ksize=3)
-    sy          = cv2.Sobel(prep, cv2.CV_32F, 0, 1, ksize=3)
-    grad        = np.sqrt(sx ** 2 + sy ** 2)
-    gradient    = grad / grad.max() if grad.max() > 0 else grad
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV).astype(np.float32)
+    hue = hsv[:, :, 0] / 179.0
+    sat = hsv[:, :, 1] / 255.0
+    val = hsv[:, :, 2] / 255.0
 
-    hsv         = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV).astype(np.float32)
-    hue         = hsv[:, :, 0] / 179.0
-    sat         = hsv[:, :, 1] / 255.0
-    val         = hsv[:, :, 2] / 255.0
+    sx   = cv2.Sobel(prep, cv2.CV_32F, 1, 0, ksize=3)
+    sy   = cv2.Sobel(prep, cv2.CV_32F, 0, 1, ksize=3)
+    mag  = np.sqrt(sx ** 2 + sy ** 2)
+    grad = mag / mag.max() if mag.max() > 0 else mag
 
-    harris      = cv2.cornerHarris(prep.astype(np.float32), 3, 3, 0.04)
-    harris_pos  = np.maximum(harris, 0)
-    harris_feat = harris_pos / harris_pos.max() if harris_pos.max() > 0 else harris_pos
+    bk_kern  = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (25, 25))
+    bk_raw   = cv2.morphologyEx(gray_u8, cv2.MORPH_BLACKHAT, bk_kern).astype(np.float32)
+    bk_max   = bk_raw.max()
+    blackhat = bk_raw / bk_max if bk_max > 0 else bk_raw
 
-    blurred     = cv2.GaussianBlur(prep, (9, 9), 2)
-    lap         = cv2.Laplacian(blurred, cv2.CV_32F)
-    lap_abs     = np.abs(lap)
-    log_feat    = lap_abs / lap_abs.max() if lap_abs.max() > 0 else lap_abs
+    lbp_raw = local_binary_pattern(gray_u8, P=8, R=1, method='uniform').astype(np.float32)
+    lbp_max = lbp_raw.max()
+    lbp     = lbp_raw / lbp_max if lbp_max > 0 else lbp_raw
 
-    orient      = (np.arctan2(sy, sx) + np.pi) / (2 * np.pi)
-    o_mean      = cv2.blur(orient, (15, 15))
-    o_sq_mean   = cv2.blur(orient ** 2, (15, 15))
-    orient_var  = np.maximum(o_sq_mean - o_mean ** 2, 0)
-    hog_entropy = orient_var / orient_var.max() if orient_var.max() > 0 else orient_var
-
-    return np.stack([
-        intensity, local_std, local_range, gradient,
-        hue, sat, val,
-        harris_feat, log_feat, hog_entropy,
-    ], axis=-1).astype(np.float32)
+    return np.stack([b, g, r, hue, sat, val, grad, blackhat, lbp], axis=-1).astype(np.float32)
 
 
 # ===========================================================================
-# PIPELINE — SUPERPIXEL DAN POST-PROCESSING
+# SUPERPIXEL & POST-PROCESSING
 # ===========================================================================
 
 def compute_superpixels(bgr):
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-    return slic(
-        rgb, n_segments=SLIC_N_SEGMENTS,
-        compactness=SLIC_COMPACTNESS, sigma=1.0, start_label=0
-    ).astype(np.int32)
+    return slic(rgb, n_segments=SLIC_N_SEG, compactness=SLIC_COMPACT,
+                sigma=1.0, start_label=0).astype(np.int32)
 
 
 def aggregate_features(feat_map, segments):
-    n_seg = segments.max() + 1
-    n_ch  = feat_map.shape[2]
-    agg   = np.zeros((n_seg, n_ch), dtype=np.float32)
-    for seg_id in range(n_seg):
-        px = segments == seg_id
+    n_sp = segments.max() + 1
+    n_ch = feat_map.shape[2]
+    agg  = np.zeros((n_sp, n_ch), dtype=np.float32)
+    for sp_id in range(n_sp):
+        px = segments == sp_id
         if px.any():
-            agg[seg_id] = feat_map[px].mean(axis=0)
+            agg[sp_id] = feat_map[px].mean(axis=0)
     return agg
 
 
 def postprocess(mask, min_area=None):
-    if min_area is None:
-        min_area = POSTPROC_MIN_AREA
-    k       = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    cleaned = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k)
-    cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_OPEN,  k)
+    min_area = min_area or MIN_AREA
+    k        = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (POSTPROC_K, POSTPROC_K))
+    cleaned  = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k)
+    cleaned  = cv2.morphologyEx(cleaned, cv2.MORPH_OPEN, k)
     contours, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     result = np.zeros_like(cleaned)
     for cnt in contours:
@@ -174,10 +208,10 @@ def postprocess(mask, min_area=None):
 
 
 # ===========================================================================
-# PIPELINE — TIGA MODEL DETEKSI
+# TIGA MODEL DETEKSI
 # ===========================================================================
 
-def detect_baseline(bgr, min_area=POSTPROC_MIN_AREA):
+def detect_baseline(bgr, min_area=MIN_AREA):
     road_mask = segment_road(bgr)
     prep      = preprocess(bgr)
     thresh    = cv2.adaptiveThreshold(
@@ -189,31 +223,28 @@ def detect_baseline(bgr, min_area=POSTPROC_MIN_AREA):
     return postprocess(pothole, min_area)
 
 
-def detect_kmeans(bgr, min_area=POSTPROC_MIN_AREA):
-    road_mask  = segment_road(bgr)
-    h, w       = bgr.shape[:2]
-    ws, hs     = int(w * WORK_SCALE), int(h * WORK_SCALE)
-    bgr_s      = cv2.resize(bgr,       (ws, hs), interpolation=cv2.INTER_AREA)
-    road_s     = cv2.resize(road_mask, (ws, hs), interpolation=cv2.INTER_NEAREST)
+def detect_kmeans(bgr, min_area=MIN_AREA):
+    road_mask = segment_road(bgr)
+    h, w      = bgr.shape[:2]
+    ws, hs    = int(w * WORK_SCALE), int(h * WORK_SCALE)
+    bgr_s     = cv2.resize(bgr,       (ws, hs), interpolation=cv2.INTER_AREA)
+    road_s    = cv2.resize(road_mask, (ws, hs), interpolation=cv2.INTER_NEAREST)
 
-    gray       = cv2.cvtColor(bgr_s, cv2.COLOR_BGR2GRAY)
-    clahe      = cv2.createCLAHE(clipLimit=CLAHE_CLIP, tileGridSize=(CLAHE_GRID, CLAHE_GRID))
-    gray_norm  = normalize_illumination(clahe.apply(gray))
-
-    pixels     = gray_norm.reshape(-1, 1).astype(np.float32)
-    criteria   = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.2)
+    prep     = preprocess(bgr_s)
+    pixels   = prep.reshape(-1, 1).astype(np.float32)
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.2)
     _, labels, centers = cv2.kmeans(
-        pixels, K=3, bestLabels=None,
-        criteria=criteria, attempts=10, flags=cv2.KMEANS_PP_CENTERS
+        pixels, K=3, bestLabels=None, criteria=criteria,
+        attempts=10, flags=cv2.KMEANS_PP_CENTERS
     )
-    darkest    = int(np.argmin(centers.flatten()))
-    mask_s     = (labels.reshape(hs, ws) == darkest).astype(np.uint8) * 255
-    mask_s     = cv2.bitwise_and(mask_s, road_s)
+    darkest = int(np.argmin(centers.flatten()))
+    mask_s  = (labels.reshape(hs, ws) == darkest).astype(np.uint8) * 255
+    mask_s  = cv2.bitwise_and(mask_s, road_s)
 
-    pothole    = cv2.resize(mask_s, (w, h), interpolation=cv2.INTER_NEAREST)
+    pothole = cv2.resize(mask_s, (w, h), interpolation=cv2.INTER_NEAREST)
     pothole[:int(h * TOP_CROP_PCT)] = 0
 
-    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (POSTPROC_K, POSTPROC_K))
     pothole = cv2.morphologyEx(pothole, cv2.MORPH_CLOSE, k)
     contours, _ = cv2.findContours(pothole, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     result = np.zeros_like(pothole)
@@ -223,19 +254,18 @@ def detect_kmeans(bgr, min_area=POSTPROC_MIN_AREA):
     return result
 
 
-def detect_rf(bgr, clf, scaler, min_area=POSTPROC_MIN_AREA):
-    road_mask  = segment_road(bgr)
-    h, w       = bgr.shape[:2]
-    ws, hs     = int(w * WORK_SCALE), int(h * WORK_SCALE)
-    bgr_s      = cv2.resize(bgr,       (ws, hs), interpolation=cv2.INTER_AREA)
-    road_s     = cv2.resize(road_mask, (ws, hs), interpolation=cv2.INTER_NEAREST)
+def detect_rf(bgr, clf, min_area=MIN_AREA):
+    road_mask = segment_road(bgr)
+    h, w      = bgr.shape[:2]
+    ws, hs    = int(w * WORK_SCALE), int(h * WORK_SCALE)
+    bgr_s     = cv2.resize(bgr,       (ws, hs), interpolation=cv2.INTER_AREA)
+    road_s    = cv2.resize(road_mask, (ws, hs), interpolation=cv2.INTER_NEAREST)
 
     prep         = preprocess(bgr_s)
     feat_map     = extract_features(bgr_s, prep)
     segments     = compute_superpixels(bgr_s)
-    seg_feats    = aggregate_features(feat_map, segments)
-    seg_scaled   = scaler.transform(seg_feats)
-    pred_labels  = clf.predict(seg_scaled)
+    sp_feats     = aggregate_features(feat_map, segments)
+    pred_labels  = clf.predict(sp_feats)
 
     pothole_segs = np.where(pred_labels == 1)[0]
     mask_s       = np.isin(segments, pothole_segs).astype(np.uint8) * 255
@@ -252,46 +282,35 @@ def detect_rf(bgr, clf, scaler, min_area=POSTPROC_MIN_AREA):
 
 def compute_metrics(pred_mask, gt_mask):
     if pred_mask.shape != gt_mask.shape:
-        gt_mask = cv2.resize(
-            gt_mask, (pred_mask.shape[1], pred_mask.shape[0]),
-            interpolation=cv2.INTER_NEAREST
-        )
-    pred = (pred_mask > MASK_THRESHOLD).astype(np.uint8)
-    gt   = (gt_mask   > MASK_THRESHOLD).astype(np.uint8)
+        gt_mask = cv2.resize(gt_mask, (pred_mask.shape[1], pred_mask.shape[0]),
+                             interpolation=cv2.INTER_NEAREST)
+    pred = (pred_mask > MASK_THRESH).astype(np.uint8)
+    gt   = (gt_mask   > MASK_THRESH).astype(np.uint8)
+    eps  = 1e-8
 
-    tp  = float(np.logical_and(pred == 1, gt == 1).sum())
-    fp  = float(np.logical_and(pred == 1, gt == 0).sum())
-    fn  = float(np.logical_and(pred == 0, gt == 1).sum())
-    tn  = float(np.logical_and(pred == 0, gt == 0).sum())
-    eps = 1e-8
+    tp = float(np.logical_and(pred == 1, gt == 1).sum())
+    fp = float(np.logical_and(pred == 1, gt == 0).sum())
+    fn = float(np.logical_and(pred == 0, gt == 1).sum())
+    tn = float(np.logical_and(pred == 0, gt == 0).sum())
 
-    iou_pothole = tp / (tp + fp + fn + eps)
-    iou_road    = tn / (tn + fp + fn + eps)
-    miou        = (iou_pothole + iou_road) / 2.0
-    dice        = (2.0 * tp) / (2.0 * tp + fp + fn + eps)
-    acc         = (tp + tn) / (tp + tn + fp + fn + eps)
-    prec        = tp / (tp + fp + eps)
-    rec         = tp / (tp + fn + eps)
-    f1          = (2.0 * prec * rec) / (prec + rec + eps)
-
+    iou_fg = tp / (tp + fp + fn + eps)
+    iou_bg = tn / (tn + fp + fn + eps)
+    prec   = tp / (tp + fp + eps)
+    rec    = tp / (tp + fn + eps)
     return {
-        "IoU Pothole": round(iou_pothole, 4),
-        "mIoU":        round(miou,        4),
-        "Dice":        round(dice,        4),
-        "Pixel Acc":   round(acc,         4),
-        "Precision":   round(prec,        4),
-        "Recall":      round(rec,         4),
-        "F1":          round(f1,          4),
+        'IoU Pothole': round(iou_fg,                         4),
+        'mIoU':        round((iou_fg + iou_bg) / 2,         4),
+        'Dice':        round(2*tp / (2*tp + fp + fn + eps),  4),
+        'Pixel Acc':   round((tp+tn)/(tp+tn+fp+fn+eps),      4),
+        'Precision':   round(prec,                            4),
+        'Recall':      round(rec,                             4),
+        'F1':          round(2*prec*rec/(prec+rec+eps),       4),
     }
 
 
 # ===========================================================================
-# HELPER — KONVERSI GAMBAR
+# HELPER
 # ===========================================================================
-
-def bgr_to_rgb(bgr):
-    return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-
 
 def make_overlay(bgr, mask, color_bgr=(0, 0, 255), alpha=0.5):
     overlay = bgr.copy()
@@ -302,23 +321,20 @@ def make_overlay(bgr, mask, color_bgr=(0, 0, 255), alpha=0.5):
     return overlay
 
 
+def bgr_to_rgb(bgr):
+    return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+
+
 def read_uploaded_image(uploaded_file):
-    file_bytes = np.frombuffer(uploaded_file.read(), dtype=np.uint8)
-    return cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+    return cv2.imdecode(np.frombuffer(uploaded_file.read(), dtype=np.uint8), cv2.IMREAD_COLOR)
 
-
-# ===========================================================================
-# LOAD MODEL (cache agar tidak reload setiap interaksi)
-# ===========================================================================
 
 @st.cache_resource
 def load_rf_model():
-    """Load model dan scaler dari disk. Kembalikan (clf, scaler) atau (None, None)."""
-    if not MODEL_PATH.exists() or not SCALER_PATH.exists():
-        return None, None
-    clf    = joblib.load(MODEL_PATH)
-    scaler = joblib.load(SCALER_PATH)
-    return clf, scaler
+    """Load model RF-9ch dari disk. Di-cache agar tidak reload setiap interaksi."""
+    if not MODEL_PATH.exists():
+        return None
+    return joblib.load(MODEL_PATH)
 
 
 # ===========================================================================
@@ -327,205 +343,237 @@ def load_rf_model():
 
 def main():
     st.set_page_config(
-        page_title="Pothole Detection",
+        page_title='Pothole Detection',
         page_icon=None,
-        layout="wide",
-        initial_sidebar_state="expanded",
+        layout='wide',
+        initial_sidebar_state='expanded',
     )
 
-    # ── Header ────────────────────────────────────────────────────────────
-    st.title("Pothole Detection")
-    st.caption("Computer Vision Final Project")
+    st.title('Pothole Detection')
+    st.caption('Computer Vision Final Project — BINUS University Semester 4')
     st.divider()
 
     # ── Sidebar ───────────────────────────────────────────────────────────
     with st.sidebar:
-        st.header("Pengaturan")
+        st.header('Pengaturan')
 
         method = st.radio(
-            "Pilih Model",
-            options=["Random Forest", "K-Means", "Adaptive Threshold"],
+            'Pilih Model',
+            options=['Random Forest (9 fitur)', 'K-Means', 'Adaptive Threshold'],
             index=0,
         )
 
         st.divider()
-
-        st.subheader("Parameter")
+        st.subheader('Parameter')
         min_area = st.slider(
-            "Area minimum deteksi (px)",
+            'Area minimum deteksi (px)',
             min_value=100, max_value=3000, value=500, step=100,
-            help="Deteksi lebih kecil dari nilai ini dianggap noise dan dihapus.",
+            help='Deteksi lebih kecil dari nilai ini dianggap noise dan dihapus.',
         )
 
         st.divider()
-
-        with st.expander("Tentang setiap model"):
+        with st.expander('Tentang setiap model'):
             st.markdown("""\
-**Random Forest (Eksperimen)**
-Supervised — dilatih dari 498 gambar berlabel.
-Menggunakan 10 fitur per superpixel SLIC.
-Membutuhkan file `model/model_rf.joblib`.
+**Random Forest — 9 fitur (Eksperimen)**
+Supervised — dilatih dari 398 gambar berlabel GT (split 80:20).
+9 fitur per superpixel: BGR x3, HSV x3, Gradient, Blackhat, LBP.
+Membutuhkan `model/model_rf_9ch.joblib`.
 
 **K-Means (Advanced)**
 Unsupervised — tidak perlu training.
-Mengelompokkan pixel menjadi 3 cluster berdasarkan kecerahan.
+K-Means (K=3) pada intensitas piksel.
 Cluster paling gelap = kandidat lubang.
 
 **Adaptive Threshold (Baseline)**
 Tidak perlu training.
-Threshold lokal berdasarkan intensitas pixel sekitar.
-Paling cepat, paling sederhana.""")
+Threshold lokal berdasarkan intensitas piksel sekitar.
+Paling cepat dan paling sederhana.""")
 
-    # ── Load model jika dipilih RF ─────────────────────────────────────────
-    clf, scaler = None, None
-    if "Random Forest" in method:
-        clf, scaler = load_rf_model()
+    # ── Load model RF jika dipilih ─────────────────────────────────────────
+    clf = None
+    if 'Random Forest' in method:
+        clf = load_rf_model()
         if clf is None:
             st.error(
-                "File model tidak ditemukan.\n\n"
-                f"- `{MODEL_PATH}`\n"
-                f"- `{SCALER_PATH}`\n\n"
-                "Latih model terlebih dahulu dengan menjalankan "
-                "**Cell 9** di `notebooks/main_training.ipynb`, lalu restart app ini."
+                f'Model tidak ditemukan: `{MODEL_PATH}`\n\n'
+                'Latih model terlebih dahulu dengan menjalankan **Bagian 5** '
+                'di `notebooks/main_training.ipynb`, lalu restart app ini.'
             )
             return
         if clf.n_features_in_ != N_FEATURES:
             st.error(
-                f"Model memiliki **{clf.n_features_in_} fitur** "
-                f"tapi pipeline sekarang menggunakan **{N_FEATURES} fitur**.\n\n"
-                "Latih ulang model dengan Cell 9 di notebook (pipeline 10-fitur)."
+                f'**Model tidak kompatibel** — model lama menggunakan '
+                f'**{clf.n_features_in_} fitur**, pipeline sekarang menggunakan '
+                f'**{N_FEATURES} fitur**.'
+            )
+            st.info(
+                '**Cara memperbaiki (jalankan notebook secara berurutan):**\n\n'
+                '1. Buka `notebooks/main_training.ipynb`\n'
+                '2. **Cell 2.3** — hapus CSV lama dulu: jalankan `SP_CSV.unlink()` '
+                'di cell baru, lalu jalankan ulang cell 2.3 untuk rebuild CSV 9-fitur (~5–8 menit)\n'
+                '3. **Cell 2.4** — jalankan ulang untuk rebuild sp_train.csv & sp_val.csv\n'
+                '4. **Bagian 5** — jalankan cell training RF untuk simpan model baru\n'
+                '5. Restart app ini (Ctrl+C lalu `streamlit run app/app.py`)'
             )
             return
-        st.sidebar.success(
-            f"Model: {clf.n_estimators} pohon, {clf.n_features_in_} fitur"
-        )
+        st.sidebar.success(f'Model: {clf.n_estimators} pohon, {clf.n_features_in_} fitur')
 
     # ── Upload gambar ──────────────────────────────────────────────────────
     col_upload, col_info = st.columns([2, 1])
 
     with col_upload:
-        st.subheader("Upload Gambar Jalan")
+        st.subheader('Upload Gambar Jalan')
         uploaded = st.file_uploader(
-            "Pilih gambar (JPG / PNG)",
-            type=["jpg", "jpeg", "png"],
-            label_visibility="collapsed",
+            'Pilih gambar (JPG / PNG)',
+            type=['jpg', 'jpeg', 'png'],
+            label_visibility='collapsed',
         )
 
     with col_info:
-        st.subheader("Informasi")
+        st.subheader('Informasi')
         if uploaded is not None:
             bgr = read_uploaded_image(uploaded)
-            if bgr is not None:
-                h, w = bgr.shape[:2]
-                st.metric("Lebar",   f"{w} px")
-                st.metric("Tinggi",  f"{h} px")
-                st.metric("Model",   method.split(" ")[0])
-            else:
-                st.error("Gambar tidak dapat dibaca.")
+            if bgr is None:
+                st.error('Gambar tidak dapat dibaca.')
                 return
+            h, w = bgr.shape[:2]
+            st.metric('Lebar',  f'{w} px')
+            st.metric('Tinggi', f'{h} px')
+            st.metric('Model',  method.split(' ')[0])
         else:
-            st.info("Belum ada gambar.")
+            st.info('Belum ada gambar.')
             return
 
     # ── Tombol deteksi ─────────────────────────────────────────────────────
-    if not st.button("Deteksi Lubang", type="primary", use_container_width=True):
-        st.image(bgr_to_rgb(bgr), caption="Gambar yang diupload", use_container_width=True)
+    if not st.button('Deteksi Lubang', type='primary', use_container_width=True):
+        st.image(bgr_to_rgb(bgr), caption='Gambar yang diupload', use_container_width=True)
         return
 
-    with st.spinner("Memproses gambar..."):
-        if "Random Forest" in method:
-            pred_mask = detect_rf(bgr, clf, scaler, min_area)
-        elif "K-Means" in method:
+    t_start = time.perf_counter()
+    with st.spinner('Memproses gambar...'):
+        if 'Random Forest' in method:
+            pred_mask = detect_rf(bgr, clf, min_area)
+        elif 'K-Means' in method:
             pred_mask = detect_kmeans(bgr, min_area)
         else:
             pred_mask = detect_baseline(bgr, min_area)
-
         road_mask = segment_road(bgr)
+    elapsed_ms = (time.perf_counter() - t_start) * 1000
 
     # ── Tampilkan hasil ────────────────────────────────────────────────────
-    st.subheader("Hasil Deteksi")
-
+    st.subheader('Hasil Deteksi')
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.image(bgr_to_rgb(bgr),
-                 caption="Gambar Asli", use_container_width=True)
+        st.image(bgr_to_rgb(bgr), caption='Gambar Asli', use_container_width=True)
     with col2:
         road_overlay = make_overlay(bgr, road_mask, color_bgr=(0, 180, 0), alpha=0.4)
-        st.image(bgr_to_rgb(road_overlay),
-                 caption="Area Jalan", use_container_width=True)
+        st.image(bgr_to_rgb(road_overlay), caption='Area Jalan (hijau)', use_container_width=True)
     with col3:
         pred_overlay = make_overlay(bgr, pred_mask, color_bgr=(0, 0, 220), alpha=0.55)
-        st.image(bgr_to_rgb(pred_overlay),
-                 caption="Prediksi Lubang", use_container_width=True)
+        st.image(bgr_to_rgb(pred_overlay), caption='Prediksi Lubang (biru)', use_container_width=True)
 
-    # Statistik deteksi
-    pothole_pct = (pred_mask > MASK_THRESHOLD).mean() * 100
-    st.info(f"Area terdeteksi sebagai lubang: **{pothole_pct:.2f}%** dari total gambar")
+    pct = (pred_mask > MASK_THRESH).mean() * 100
+    m1, m2 = st.columns(2)
+    m1.info(f'Area lubang terdeteksi: **{pct:.2f}%** dari total gambar')
+    m2.info(f'Waktu prediksi ({method.split(" ")[0]}): **{elapsed_ms:.1f} ms**')
 
-    # Unduh mask
-    ok, buf = cv2.imencode(".png", pred_mask)
+    ok, buf = cv2.imencode('.png', pred_mask)
     if ok:
         st.download_button(
-            "Unduh Predicted Mask (PNG)",
+            'Unduh Predicted Mask (PNG)',
             data=buf.tobytes(),
-            file_name="predicted_mask.png",
-            mime="image/png",
+            file_name='predicted_mask.png',
+            mime='image/png',
         )
 
     # ── Evaluasi dengan Ground Truth (opsional) ────────────────────────────
     st.divider()
-    st.subheader("Evaluasi dengan Ground Truth (Opsional)")
-    st.caption("Upload mask ground truth PNG jika tersedia untuk menghitung metrik evaluasi.")
+    st.subheader('Evaluasi dengan Ground Truth (Opsional)')
+    st.caption(
+        'Upload mask ground truth untuk menghitung metrik. '
+        'Format: **grayscale PNG** — piksel putih (255) = lubang, hitam (0) = jalan.'
+    )
 
     uploaded_gt = st.file_uploader(
-        "Upload ground truth mask (PNG grayscale)",
-        type=["png", "jpg"],
-        key="gt_uploader",
-        label_visibility="collapsed",
+        'Upload ground truth mask (PNG grayscale)',
+        type=['png', 'jpg'],
+        key='gt_uploader',
+        label_visibility='collapsed',
     )
 
     if uploaded_gt is not None:
-        gt_bytes = np.frombuffer(uploaded_gt.read(), dtype=np.uint8)
-        gt_mask  = cv2.imdecode(gt_bytes, cv2.IMREAD_GRAYSCALE)
+        gt_raw = cv2.imdecode(
+            np.frombuffer(uploaded_gt.read(), dtype=np.uint8),
+            cv2.IMREAD_GRAYSCALE,
+        )
 
-        if gt_mask is None:
-            st.error("Tidak dapat membaca ground truth mask.")
+        if gt_raw is None:
+            st.error('Tidak dapat membaca file mask. Pastikan file adalah gambar grayscale yang valid.')
+            return
+
+        # Resize GT ke ukuran pred_mask jika berbeda
+        if gt_raw.shape != pred_mask.shape:
+            gt_raw = cv2.resize(
+                gt_raw, (pred_mask.shape[1], pred_mask.shape[0]),
+                interpolation=cv2.INTER_NEAREST,
+            )
+
+        # Binarisasi ketat: nilai > 127 → 255 (putih), lainnya → 0 (hitam)
+        gt_bin = ((gt_raw > MASK_THRESH).astype(np.uint8)) * 255
+
+        n_pothole_px = int((gt_bin > 0).sum())
+        n_total_px   = gt_bin.size
+        gt_pct       = n_pothole_px / n_total_px * 100
+
+        # Tampilkan preview GT setelah binarisasi
+        st.markdown('**Preview Ground Truth (setelah binarisasi >127):**')
+        cgt1, cgt2, cgt3 = st.columns([1, 1, 2])
+        with cgt1:
+            st.image(gt_bin, caption='GT Mask (biner)', use_container_width=True, clamp=True)
+        with cgt2:
+            st.metric('Piksel Lubang', f'{n_pothole_px:,}')
+            st.metric('Persentase',    f'{gt_pct:.2f}%')
+        with cgt3:
+            st.info(
+                'Mask sudah dibinarisasi: putih = lubang, hitam = jalan.\n\n'
+                'Jika preview tidak sesuai, pastikan mask asli menggunakan '
+                'nilai 255 (putih) untuk area lubang dan 0 (hitam) untuk jalan.'
+            )
+
+        if n_pothole_px == 0:
+            st.warning('Ground truth mask tampak kosong (tidak ada piksel putih). Periksa format file.')
+            return
+
+        metrics = compute_metrics(pred_mask, gt_bin)
+
+        st.markdown('**Metrik Evaluasi:**')
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric('mIoU',        f"{metrics['mIoU']:.4f}",        help='Metrik utama — target >= 0.60')
+        c2.metric('IoU Pothole', f"{metrics['IoU Pothole']:.4f}", help='IoU kelas lubang saja')
+        c3.metric('Dice',        f"{metrics['Dice']:.4f}")
+        c4.metric('Pixel Acc',   f"{metrics['Pixel Acc']:.4f}")
+
+        c5, c6, c7 = st.columns(3)
+        c5.metric('Precision', f"{metrics['Precision']:.4f}")
+        c6.metric('Recall',    f"{metrics['Recall']:.4f}")
+        c7.metric('F1',        f"{metrics['F1']:.4f}")
+
+        miou = metrics['mIoU']
+        if miou >= 0.60:
+            st.success(f'mIoU = {miou:.4f} — target 0.60 tercapai.')
+        elif miou >= 0.40:
+            st.warning(f'mIoU = {miou:.4f} — mendekati target, belum tercapai.')
         else:
-            metrics = compute_metrics(pred_mask, gt_mask)
+            st.error(f'mIoU = {miou:.4f} — jauh dari target 0.60.')
 
-            # Metrik utama — 4 kolom baris pertama
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("IoU Pothole",  f"{metrics['IoU Pothole']:.4f}",
-                      help="Metrik utama — target > 0.60")
-            c2.metric("mIoU",         f"{metrics['mIoU']:.4f}",
-                      help="Rata-rata IoU 2 kelas")
-            c3.metric("Dice",         f"{metrics['Dice']:.4f}")
-            c4.metric("Pixel Acc",    f"{metrics['Pixel Acc']:.4f}")
-
-            # Metrik tambahan — 3 kolom baris kedua
-            c5, c6, c7 = st.columns(3)
-            c5.metric("Precision", f"{metrics['Precision']:.4f}")
-            c6.metric("Recall",    f"{metrics['Recall']:.4f}")
-            c7.metric("F1",        f"{metrics['F1']:.4f}")
-
-            # Status target
-            iou = metrics["IoU Pothole"]
-            if iou >= 0.60:
-                st.success(f"IoU Pothole = {iou:.4f} — target 0.60 tercapai.")
-            else:
-                st.warning(f"IoU Pothole = {iou:.4f} — target 0.60 belum tercapai.")
-
-            # Visualisasi perbandingan prediksi vs GT
-            st.subheader("Perbandingan Prediksi vs Ground Truth")
-            ca, cb = st.columns(2)
-            with ca:
-                gt_overlay = make_overlay(bgr, gt_mask, color_bgr=(0, 200, 0), alpha=0.5)
-                st.image(bgr_to_rgb(gt_overlay),
-                         caption="Ground Truth (hijau)", use_container_width=True)
-            with cb:
-                st.image(bgr_to_rgb(pred_overlay),
-                         caption="Prediksi (biru)", use_container_width=True)
+        st.subheader('Perbandingan Prediksi vs Ground Truth')
+        ca, cb = st.columns(2)
+        with ca:
+            gt_overlay = make_overlay(bgr, gt_bin, color_bgr=(0, 200, 0), alpha=0.5)
+            st.image(bgr_to_rgb(gt_overlay), caption='Ground Truth (hijau)', use_container_width=True)
+        with cb:
+            st.image(bgr_to_rgb(pred_overlay), caption='Prediksi (biru)', use_container_width=True)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
