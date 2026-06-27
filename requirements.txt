@@ -1,9 +1,12 @@
-opencv-python>=4.8.0
+# Pothole Detection — dependencies LENGKAP untuk menjalankan Streamlit app
+# (cukup `pip install -r requirements.txt` lalu app/app.py bisa langsung jalan).
+# Untuk Streamlit Cloud: gunakan opencv-python-headless (tanpa GUI).
+
+streamlit>=1.36.0            # butuh st.navigation / st.Page (multipage)
+opencv-python-headless>=4.8.0
 numpy>=1.24.0
-scikit-learn>=1.3.0
-scikit-image>=0.21.0
-matplotlib>=3.7.0
 pandas>=2.0.0
-streamlit>=1.28.0
-Pillow>=10.0.0
+scikit-learn>=1.7.0          # versi RandomForest tersimpan (model_rf_9ch.joblib)
+scikit-image>=0.21.0         # SLIC superpixel + Local Binary Pattern
 joblib>=1.3.0
+Pillow>=10.0.0

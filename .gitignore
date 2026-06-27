@@ -1,3 +1,4 @@
+
 # Python
 __pycache__/
 *.py[cod]
@@ -15,43 +16,50 @@ env/
 .venv/
 .env/
 
-# Jupyter
+# Jupyter / training artifacts
 .ipynb_checkpoints/
 *.ipynb_checkpoints
+catboost_info/
+notebooks/catboost_info/
 
-# Model files (large binary — commit only intentionally)
+# Model files (besar) — hanya RF yang dikompres ikut di-commit
+# agar app yang ter-deploy tetap punya model.
 model/*.joblib
 model/*.pkl
 model/*.h5
 !model/.gitkeep
+!model/model_rf_9ch.joblib
 
-# Dataset (too large for git — share separately)
-Dataset/
+# Dataset (gambar terlalu besar — bagikan terpisah).
+# Dataset/README.md tetap ikut ter-commit sebagai dokumentasi.
+Dataset/train/
+Dataset/test/
+Dataset/**/*.jpg
+Dataset/**/*.jpeg
+Dataset/**/*.png
 
 # Output artifacts
 predictions/
+results/
 results_*.csv
 evaluation_chart.png
 
-# macOS
+# Streamlit (rahasia jangan di-commit; config.toml tetap ikut)
+.streamlit/secrets.toml
+
+# Test / tooling artifacts
+.playwright-mcp/
+
+# OS / IDE
 .DS_Store
 .AppleDouble
 .LSOverride
-
-# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# Streamlit
-.streamlit/secrets.toml
-
-# Dataset
-Dataset/
-
-# Results
-results_
-
-# CLAUDE
+# Project instructions (lokal)
 CLAUDE.md
+DEPLOY.md
+AGENTS.md
