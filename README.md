@@ -148,6 +148,39 @@ At the default threshold, boosting was actually **below** Random Forest. After
 the gain is small while Random Forest is **simpler, lighter, and easier to explain**
 (feature importance), **Random Forest was chosen as the main model** of the app.
 
+### Extended Boosting Experiment (Kaggle — lecturer recommendation)
+
+Following feedback from our lecturer to explore boosting classifiers further, a separate
+experiment was conducted on **Kaggle** using the same ARA 7.0 competition dataset.
+The experiment extended the feature set from **9 to 20+ features** (adding Gabor filters,
+LAB color space, illumination normalization, `wet_like`, `shadow_like`, and spatial
+position features) and added **RDD2022 India** road images as negative-only augmentation
+to reduce false positives on shadows and wet asphalt.
+
+Boosting models were compared at the sample (pixel) level:
+
+| Model | Macro F1 | Pothole F1 | Precision | Recall |
+|-------|----------|------------|-----------|--------|
+| **LightGBM** | **0.8266** | **0.8217** | 0.7770 | 0.8718 |
+| Soft Ensemble (LGBM+XGB+CatBoost) | 0.8223 | 0.8193 | 0.7670 | 0.8792 |
+| CatBoost | 0.8170 | 0.8154 | 0.7577 | 0.8825 |
+| XGBoost | 0.8162 | 0.8143 | 0.7578 | 0.8800 |
+
+After post-processing grid search (threshold, morphology, area filtering), the best
+validation result on 100 images was:
+
+| Metric | Value |
+|--------|-------|
+| **mIoU** | **0.5918** |
+| IoU pothole | 0.3201 |
+| Pixel Accuracy | 0.8741 |
+| Macro F1 | 0.6871 |
+
+LightGBM achieved the best per-sample F1 and was selected as the deployment model for
+this experiment. The Soft Ensemble of all three boosting models did not surpass
+LightGBM alone, so it was not used. Full notebook and results:
+`notebooks/cvpothole_dian/`.
+
 ---
 
 ## Closing
