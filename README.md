@@ -10,13 +10,13 @@ side through an interactive Streamlit web app.
 
 ### Team Members
 
-| No | Name | Student ID |
-|----|------|------------|
-| 1  | DIAN RAKHMAWATI LESTARI | 2802539085 |
-| 2  | FADHLAN NUR RACHMAN | 2802491690 |
-| 3  | MATTHEW KEN SUSANTO | 2802407736 |
-| 4  | NASAURAMECCA NOUR HAQQANSHAH SHODIQIN | 2802541921 |
-| 5  | NICHOLAS | 2802424326 |
+| No  | Name                                  | Student ID |
+| --- | ------------------------------------- | ---------- |
+| 1   | DIAN RAKHMAWATI LESTARI               | 2802539085 |
+| 2   | FADHLAN NUR RACHMAN                   | 2802491690 |
+| 3   | MATTHEW KEN SUSANTO                   | 2802407736 |
+| 4   | NASAURAMECCA NOUR HAQQANSHAH SHODIQIN | 2802541921 |
+| 5   | NICHOLAS                              | 2802424326 |
 
 ---
 
@@ -24,12 +24,11 @@ side through an interactive Streamlit web app.
 
 Live Demo Application on : https://computer-vision-pothole-project.streamlit.app/
 
-
 ---
 
 ## How to Run the App
 
-**Prerequisite:** Python 3.9+ installed. A *virtual environment* is recommended so
+**Prerequisite:** Python 3.9+ installed. A _virtual environment_ is recommended so
 dependencies do not clash with other projects.
 
 ### Windows (PowerShell / CMD)
@@ -118,15 +117,15 @@ Input image (BGR)
 ```
 
 **9 features:** BGR ×3, HSV ×3, Gradient Magnitude, Blackhat, LBP.
-*Blackhat* highlights small dark spots, *LBP* captures surface texture.
+_Blackhat_ highlights small dark spots, _LBP_ captures surface texture.
 
 ### Three Main Models
 
-| Model | Type | Core Idea | Ideal Condition |
-|-------|------|-----------|-----------------|
-| **Adaptive Threshold** | Unsupervised | Pixels darker than their neighbours = pothole | Clean roads, dark high-contrast potholes |
-| **K-Means** | Unsupervised | K-Means (K=3) on intensity; darkest cluster = pothole candidate | Roads with water puddles / dark variations |
-| **Random Forest + SLIC** | Supervised | 9 features per superpixel classified by RF (200 trees) | Cracked roads & diverse conditions (most accurate) |
+| Model                    | Type         | Core Idea                                                       | Ideal Condition                                    |
+| ------------------------ | ------------ | --------------------------------------------------------------- | -------------------------------------------------- |
+| **Adaptive Threshold**   | Unsupervised | Pixels darker than their neighbours = pothole                   | Clean roads, dark high-contrast potholes           |
+| **K-Means**              | Unsupervised | K-Means (K=3) on intensity; darkest cluster = pothole candidate | Roads with water puddles / dark variations         |
+| **Random Forest + SLIC** | Supervised   | 9 features per superpixel classified by RF (200 trees)          | Cracked roads & diverse conditions (most accurate) |
 
 **Evaluation target:** mIoU ≥ 0.60 on 100 validation images (80:20 split).
 
@@ -134,23 +133,23 @@ Input image (BGR)
 
 We tested modern boosting classifiers on the **same 9 features & pipeline**:
 
-| Model | mIoU |
-|-------|------|
-| Adaptive Threshold | 0.4028 |
-| K-Means | 0.4442 |
-| **Random Forest (used)** | **0.5179** |
-| XGBoost (threshold 0.5) | 0.4923 |
-| LightGBM (threshold 0.5) | 0.4959 |
-| CatBoost (calibrated threshold 0.70) | 0.5440 |
+| Model                                | mIoU       |
+| ------------------------------------ | ---------- |
+| Adaptive Threshold                   | 0.4028     |
+| K-Means                              | 0.4442     |
+| **Random Forest (used)**             | **0.5179** |
+| XGBoost (threshold 0.5)              | 0.4923     |
+| LightGBM (threshold 0.5)             | 0.4959     |
+| CatBoost (calibrated threshold 0.70) | 0.5440     |
 
 At the default threshold, boosting was actually **below** Random Forest. After
-*decision threshold* calibration, CatBoost was only marginally ahead (+0.026). Since
+_decision threshold_ calibration, CatBoost was only marginally ahead (+0.026). Since
 the gain is small while Random Forest is **simpler, lighter, and easier to explain**
 (feature importance), **Random Forest was chosen as the main model** of the app.
 
-### Extended Boosting Experiment (Kaggle — lecturer recommendation)
+### Extended Boosting Experiment (another notebook)
 
-Following feedback from our lecturer to explore boosting classifiers further, a separate
+Following feedback from Kak EL to explore boosting classifiers further, a separate
 experiment was conducted on **Kaggle** using the same ARA 7.0 competition dataset.
 The experiment extended the feature set from **9 to 20+ features** (adding Gabor filters,
 LAB color space, illumination normalization, `wet_like`, `shadow_like`, and spatial
@@ -159,22 +158,22 @@ to reduce false positives on shadows and wet asphalt.
 
 Boosting models were compared at the sample (pixel) level:
 
-| Model | Macro F1 | Pothole F1 | Precision | Recall |
-|-------|----------|------------|-----------|--------|
-| **LightGBM** | **0.8266** | **0.8217** | 0.7770 | 0.8718 |
-| Soft Ensemble (LGBM+XGB+CatBoost) | 0.8223 | 0.8193 | 0.7670 | 0.8792 |
-| CatBoost | 0.8170 | 0.8154 | 0.7577 | 0.8825 |
-| XGBoost | 0.8162 | 0.8143 | 0.7578 | 0.8800 |
+| Model                             | Macro F1   | Pothole F1 | Precision | Recall |
+| --------------------------------- | ---------- | ---------- | --------- | ------ |
+| **LightGBM**                      | **0.8266** | **0.8217** | 0.7770    | 0.8718 |
+| Soft Ensemble (LGBM+XGB+CatBoost) | 0.8223     | 0.8193     | 0.7670    | 0.8792 |
+| CatBoost                          | 0.8170     | 0.8154     | 0.7577    | 0.8825 |
+| XGBoost                           | 0.8162     | 0.8143     | 0.7578    | 0.8800 |
 
 After post-processing grid search (threshold, morphology, area filtering), the best
 validation result on 100 images was:
 
-| Metric | Value |
-|--------|-------|
-| **mIoU** | **0.5918** |
-| IoU pothole | 0.3201 |
-| Pixel Accuracy | 0.8741 |
-| Macro F1 | 0.6871 |
+| Metric         | Value      |
+| -------------- | ---------- |
+| **mIoU**       | **0.5918** |
+| IoU pothole    | 0.3201     |
+| Pixel Accuracy | 0.8741     |
+| Macro F1       | 0.6871     |
 
 LightGBM achieved the best per-sample F1 and was selected as the deployment model for
 this experiment. The Soft Ensemble of all three boosting models did not surpass
