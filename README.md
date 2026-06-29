@@ -213,7 +213,7 @@ App opens at `http://localhost:8501`. Both image and video inference modes are a
 
 | Split      | Images  | Purpose                                     |
 | ---------- | ------- | ------------------------------------------- |
-| Training   | 398     | Model training (both pipelines)             |
+| Training   | 498     | Model training (both pipelines)             |
 | Validation | 100     | Evaluation & metric computation             |
 | Test       | 295     | Final held-out test (no ground truth masks) |
 | **Total**  | **793** |                                             |
