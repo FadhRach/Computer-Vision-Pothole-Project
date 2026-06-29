@@ -118,8 +118,8 @@ Computer-Vision-Pothole-Project/
 │   ├── model_rf_9ch.joblib           # Random Forest model (~51 MB)
 │   └── model_boost_9ch.joblib        # CatBoost experiment model
 ├── Dataset/
-│   ├── train/images/                 # 398 training images
-│   ├── train/mask/                   # 398 ground truth masks
+│   ├── train/images/                 # 498 training images
+│   ├── train/mask/                   # 498 ground truth masks
 │   └── test/images/                  # 295 test images
 ├── result_csv/                       # Superpixel features + per-model metrics CSV
 ├── docs/                             # Report, presentation, requirements
