@@ -211,12 +211,12 @@ App opens at `http://localhost:8501`. Both image and video inference modes are a
 
 ### ARA 7.0 Road Surface (Primary Dataset)
 
-| Split      | Images  | Purpose                                                      |
-| ---------- | ------- | ------------------------------------------------------------ |
-| Training   | 498     | Model training also there 498 training mask (both pipelines) |
-| Validation | 100     | Evaluation & metric computation                              |
-| Test       | 295     | Final held-out test (no ground truth masks)                  |
-| **Total**  | **793** |                                                              |
+| Split      | Images  | Purpose                                                        |
+| ---------- | ------- | -------------------------------------------------------------- |
+| Training   | 498     | Model training also there's 498 training mask (both pipelines) |
+| Validation | 100     | Evaluation & metric computation                                |
+| Test       | 295     | Final held-out test (no ground truth masks)                    |
+| **Total**  | **793** |                                                                |
 
 - Source: ARA 7.0 Road Surface competition dataset
 - Contains RGB images + binary ground truth segmentation masks
