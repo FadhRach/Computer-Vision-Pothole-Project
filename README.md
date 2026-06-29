@@ -211,18 +211,18 @@ App opens at `http://localhost:8501`. Both image and video inference modes are a
 
 ### ARA 7.0 Road Surface (Primary Dataset)
 
-| Split      | Images  | Purpose                                     |
-| ---------- | ------- | ------------------------------------------- |
-| Training   | 498     | Model training (both pipelines)             |
-| Validation | 100     | Evaluation & metric computation             |
-| Test       | 295     | Final held-out test (no ground truth masks) |
-| **Total**  | **793** |                                             |
+| Split      | Images  | Purpose                                                      |
+| ---------- | ------- | ------------------------------------------------------------ |
+| Training   | 498     | Model training also there 498 training mask (both pipelines) |
+| Validation | 100     | Evaluation & metric computation                              |
+| Test       | 295     | Final held-out test (no ground truth masks)                  |
+| **Total**  | **793** |                                                              |
 
 - Source: ARA 7.0 Road Surface competition dataset
 - Contains RGB images + binary ground truth segmentation masks
 - Images: Indonesian road scenes with various lighting and road conditions
 
-### RDD2022 India (Hard-Negative Augmentation — Pipeline 2 Only)
+### RDD2022 India (Hard-Negative Augmentation - Pipeline 2 Only)
 
 - 700 images of road distress (cracks, patches — visually similar to potholes)
 - 630,000 non-pothole pixels sampled as hard negatives
