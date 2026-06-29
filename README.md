@@ -1,12 +1,12 @@
 # Pothole Detection - Computer Vision Final Project
 
-**BINUS University · COMP7116001 · Computer Vision · Odd Semester 2025/2026**
+**BINUS University - COMP7116001 - Computer Vision**
 
 A comparative study of pothole detection pipelines using traditional computer vision — from unsupervised methods to supervised gradient boosting, without deep learning. Two fully deployed Streamlit applications allow real-time road pothole detection from images and video.
 
 ---
 
-## Group 2 — Team Members
+## Group 2 - Team Members
 
 | No  | Name                                  | Student ID |
 | --- | ------------------------------------- | ---------- |
@@ -20,38 +20,38 @@ A comparative study of pothole detection pipelines using traditional computer vi
 
 ## Links & Resources
 
-| Resource                     | Description                                 | Link                                                        |
-| ---------------------------- | ------------------------------------------- | ----------------------------------------------------------- |
-| **Live App — Pipeline 1**    | Random Forest + SLIC (Streamlit Cloud)      | https://computer-vision-pothole-project.streamlit.app/      |
-| **Live App — Pipeline 2**    | LightGBM + 36 Features (Streamlit Cloud)    | https://pothole-detection-cv.streamlit.app                  |
-| **Live App — Pipeline 2**    | LightGBM + 36 Features (HuggingFace Spaces) | https://huggingface.co/spaces/ddrlvee/pothole-detection     |
-| **Source Code — Pipeline 1** | GitHub Repository                           | https://github.com/FadhRach/Computer-Vision-Pothole-Project |
-| **Source Code — Pipeline 2** | GitHub Repository                           | https://github.com/ddrlve/pothole-detection                 |
-| **Demo Video**               | YouTube (< 5 minutes)                       | https://youtu.be/JAk7gb7jytc?feature=shared                 |
-| **Presentation (PPT)**       | Canva Slides                                | https://canva.link/nfw5gd1jus2nqk8                          |
-| **Dataset — ARA 7.0**        | Primary training dataset                    | ARA 7.0 Road Surface Competition                            |
-| **Dataset — RDD2022 India**  | Hard-negative augmentation                  | https://github.com/sekilab/RoadDamageDetector               |
+| Resource                   | Description                                 | Link                                                        |
+| -------------------------- | ------------------------------------------- | ----------------------------------------------------------- |
+| **Live App Pipeline 1**    | Random Forest + SLIC (Streamlit Cloud)      | https://computer-vision-pothole-project.streamlit.app/      |
+| **Live App Pipeline 2**    | LightGBM + 36 Features (Streamlit Cloud)    | https://pothole-detection-cv.streamlit.app                  |
+| **Live App Pipeline 2**    | LightGBM + 36 Features (HuggingFace Spaces) | https://huggingface.co/spaces/ddrlvee/pothole-detection     |
+| **Source Code Pipeline 1** | GitHub Repository                           | https://github.com/FadhRach/Computer-Vision-Pothole-Project |
+| **Source Code Pipeline 2** | GitHub Repository                           | https://github.com/ddrlve/pothole-detection                 |
+| **Demo Video**             | YouTube (< 5 minutes)                       | https://youtu.be/JAk7gb7jytc?feature=shared                 |
+| **Presentation (PPT)**     | Canva Slides                                | https://canva.link/nfw5gd1jus2nqk8                          |
+| **Dataset ARA 7.0**        | Primary training dataset                    | ARA 7.0 Road Surface Competition                            |
+| **Dataset RDD2022 India**  | Hard-negative augmentation                  | https://github.com/sekilab/RoadDamageDetector               |
 
 ---
 
 ## Project Overview
 
-This project investigates automated pothole detection using exclusively traditional (non-deep-learning) computer vision. We systematically explored four approaches — adaptive thresholding, K-Means clustering, Random Forest with SLIC superpixels, and gradient boosting with pixel-level features — comparing their segmentation performance on the ARA 7.0 Road Surface dataset.
+This project investigates automated pothole detection using exclusively traditional (non-deep-learning) computer vision. We systematically explored four approaches, adaptive thresholding, K-Means clustering, Random Forest with SLIC superpixels, and gradient boosting with pixel-level features, comparing their segmentation performance on the ARA 7.0 Road Surface dataset.
 
 ### Key Findings
 
 | Pipeline       | Method                                   | mIoU      | Pixel Acc | Macro F1  |
 | -------------- | ---------------------------------------- | --------- | --------- | --------- |
-| Baseline       | Adaptive Threshold                       | 0.403     | —         | —         |
-| Baseline       | K-Means Clustering                       | 0.444     | —         | —         |
+| Baseline       | Adaptive Threshold                       | 0.403     | **66.7%** | —         |
+| Advanced       | K-Means Clustering                       | 0.444     | **75%**   | —         |
 | **Pipeline 1** | **Random Forest + SLIC (9 features)**    | **0.518** | **86.3%** | **0.553** |
 | **Pipeline 2** | **LightGBM + Pixel-Level (36 features)** | **0.592** | **87.4%** | **0.827** |
 
-**LightGBM (Pipeline 2) is the best-performing model** — achieving higher mIoU, pixel accuracy, and macro F1 than all other approaches, including Random Forest (Pipeline 1).
+**LightGBM (Pipeline 2) is the best-performing model**, achieving higher mIoU, pixel accuracy, and macro F1 than all other approaches, including Random Forest (Pipeline 1).
 
 ---
 
-## Pipeline 1 — Random Forest + SLIC
+## Pipeline 1 - Random Forest + SLIC
 
 **Repository**: https://github.com/FadhRach/Computer-Vision-Pothole-Project
 
@@ -129,7 +129,7 @@ Computer-Vision-Pothole-Project/
 
 ---
 
-## Pipeline 2 — LightGBM + 36 Pixel-Level Features
+## Pipeline 2 - LightGBM + 36 Pixel-Level Features
 
 **Repository**: https://github.com/ddrlve/pothole-detection
 
@@ -159,7 +159,7 @@ Input Image (BGR)
 | Spatial Priors   | y_norm (normalized vertical pixel position) |
 | Scene Context    | illum_norm, wet_like road indicator         |
 
-> **Most important feature: `y_norm`** — vertical pixel position, because potholes consistently appear in the lower portion of road camera images.
+> **Most important feature: `y_norm`** vertical pixel position, because potholes consistently appear in the lower portion of road camera images.
 
 ### Key Parameters
 
@@ -283,4 +283,4 @@ All members participated in weekly online meetings, peer code review, and jointl
 
 ---
 
-_COMP7116001 — Computer Vision · School of Computer Science, BINUS University · Odd Semester 2025/2026_
+_COMP7116001 — Computer Vision, School of Computer Science, BINUS University 2025/2026_
